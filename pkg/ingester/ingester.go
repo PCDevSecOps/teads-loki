@@ -245,8 +245,10 @@ func (i *Ingester) setupAutoForget() {
 		ticker := time.NewTicker(i.cfg.LifecyclerConfig.HeartbeatPeriod)
 		defer ticker.Stop()
 
+		var forgotten int
 		for range ticker.C {
 			err := i.lifecycler.KVStore.CAS(ctx, ring.IngesterRingKey, func(in interface{}) (out interface{}, retry bool, err error) {
+				forgotten = 0
 				if in == nil {
 					return nil, false, nil
 				}
@@ -276,6 +278,7 @@ func (i *Ingester) setupAutoForget() {
 					for _, id := range removeList {
 						level.Info(util_log.Logger).Log("msg", fmt.Sprintf("forgeting ingester %v because it was not healthy after %v", id, i.cfg.LifecyclerConfig.RingConfig.HeartbeatTimeout))
 						ringDesc.RemoveIngester(id)
+						forgotten++
 					}
 					return ringDesc, true, nil
 				}
@@ -284,6 +287,8 @@ func (i *Ingester) setupAutoForget() {
 			})
 			if err != nil {
 				level.Warn(util_log.Logger).Log("msg", err)
+			} else {
+				i.metrics.autoForgetUnhealthyIngestersTotal.Add(float64(forgotten))
 			}
 		}
 	}()
