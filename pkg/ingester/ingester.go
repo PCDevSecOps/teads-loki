@@ -245,51 +245,53 @@ func (i *Ingester) setupAutoForget() {
 		ticker := time.NewTicker(i.cfg.LifecyclerConfig.HeartbeatPeriod)
 		defer ticker.Stop()
 
-		var forgotten int
+		var forgetList []string
 		for range ticker.C {
 			err := i.lifecycler.KVStore.CAS(ctx, ring.IngesterRingKey, func(in interface{}) (out interface{}, retry bool, err error) {
-				forgotten = 0
+				forgetList = forgetList[:0]
 				if in == nil {
 					return nil, false, nil
 				}
 
 				ringDesc, ok := in.(*ring.Desc)
 				if !ok {
-					level.Warn(util_log.Logger).Log("msg", fmt.Sprintf("ingester autoforget saw a KV store value that was not `ring.Desc`, got `%T`", in))
+					level.Warn(util_log.Logger).Log("msg", fmt.Sprintf("autoforget saw a KV store value that was not `ring.Desc`, got `%T`", in))
 					return nil, false, nil
 				}
-				var removeList []string
+
 				for id, ingester := range ringDesc.Ingesters {
 					if !ingester.IsHealthy(ring.Reporting, i.cfg.LifecyclerConfig.RingConfig.HeartbeatTimeout, time.Now()) {
 						if i.lifecycler.ID == id {
 							level.Warn(util_log.Logger).Log("msg", fmt.Sprintf("autoforget has seen our ID `%s` as unhealthy in the ring, network may be partitioned, skip forgeting ingesters this round", id))
 							return nil, false, nil
 						}
-						removeList = append(removeList, id)
+						forgetList = append(forgetList, id)
 					}
 				}
 
-				if len(removeList) == len(ringDesc.Ingesters)-1 {
-					level.Warn(util_log.Logger).Log("msg", fmt.Sprintf("autoforget have seen %d unhealthy ingesters out of %d, network may be partioned, skip forgeting ingesters this round", len(removeList), len(ringDesc.Ingesters)))
+				if len(forgetList) == len(ringDesc.Ingesters)-1 {
+					level.Warn(util_log.Logger).Log("msg", fmt.Sprintf("autoforget have seen %d unhealthy ingesters out of %d, network may be partioned, skip forgeting ingesters this round", len(forgetList), len(ringDesc.Ingesters)))
+					forgetList = forgetList[:0]
 					return nil, false, nil
 				}
 
-				if len(removeList) > 0 {
-					for _, id := range removeList {
-						level.Info(util_log.Logger).Log("msg", fmt.Sprintf("forgeting ingester %v because it was not healthy after %v", id, i.cfg.LifecyclerConfig.RingConfig.HeartbeatTimeout))
+				if len(forgetList) > 0 {
+					for _, id := range forgetList {
 						ringDesc.RemoveIngester(id)
-						forgotten++
 					}
 					return ringDesc, true, nil
 				}
-
 				return nil, false, nil
 			})
 			if err != nil {
 				level.Warn(util_log.Logger).Log("msg", err)
-			} else {
-				i.metrics.autoForgetUnhealthyIngestersTotal.Add(float64(forgotten))
+				continue
 			}
+
+			for _, id := range forgetList {
+				level.Info(util_log.Logger).Log("msg", fmt.Sprintf("autoforget removed ingester %v from the ring because it was not healthy after %v", id, i.cfg.LifecyclerConfig.RingConfig.HeartbeatTimeout))
+			}
+			i.metrics.autoForgetUnhealthyIngestersTotal.Add(float64(len(forgetList)))
 		}
 	}()
 }
