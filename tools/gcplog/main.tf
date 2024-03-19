@@ -1,7 +1,7 @@
 terraform {
   required_providers {
     google = {
-      source = "hashicorp/google"
+      source  = "hashicorp/google"
       version = "3.5.0"
     }
   }
@@ -9,13 +9,16 @@ terraform {
 
 provider "google" {
   credentials = file(var.credentials_file)
-  project = var.project
-  zone = var.zone
-  region= var.region
+  project     = var.project
+  zone        = var.zone
+  region      = var.region
 }
 
 resource "google_pubsub_topic" "cloud-logs" {
   name = var.name
+  labels = {
+    yor_trace = "d9456a96-9a5b-45fd-967a-e5daae690bfe"
+  }
 }
 
 resource "google_logging_project_sink" "main" {
@@ -35,6 +38,9 @@ resource "google_logging_project_sink" "main" {
 resource "google_pubsub_subscription" "main" {
   name  = var.name
   topic = google_pubsub_topic.cloud-logs.name
+  labels = {
+    yor_trace = "511df17d-d025-422c-8064-cd53536176f9"
+  }
 }
 
 resource "google_pubsub_topic_iam_binding" "log-writer" {
